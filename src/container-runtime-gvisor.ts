@@ -35,8 +35,7 @@ export interface VolumeMount {
 }
 
 // runsc state root — all container state lives here (cleaned up on startup)
-const GVISOR_STATE_DIR =
-  process.env.GVISOR_STATE_DIR || '/tmp/nanoclaw-gvisor';
+const GVISOR_STATE_DIR = process.env.GVISOR_STATE_DIR || '/tmp/nanoclaw-gvisor';
 
 // Platform selects the syscall interception mechanism:
 //   'ptrace' — portable, works in Docker with SYS_PTRACE cap, no KVM needed
@@ -153,12 +152,17 @@ export function spawnGVisorContainer(
   const proc = spawn(
     'runsc',
     [
-      '--root', GVISOR_STATE_DIR,
-      '--platform', GVISOR_PLATFORM,
-      '--network', 'host', // agents need internet (WebSearch, WebFetch)
-      '--log', '/dev/stderr',
+      '--root',
+      GVISOR_STATE_DIR,
+      '--platform',
+      GVISOR_PLATFORM,
+      '--network',
+      'host', // agents need internet (WebSearch, WebFetch)
+      '--log',
+      '/dev/stderr',
       'run',
-      '--bundle', bundleDir,
+      '--bundle',
+      bundleDir,
       id,
     ],
     { stdio: ['pipe', 'pipe', 'pipe'] },
@@ -187,10 +191,10 @@ export function spawnGVisorContainer(
 /** Gracefully stop a named gVisor sandbox (SIGTERM via runsc, then hard kill). */
 export function stopGVisorContainer(id: string): void {
   try {
-    execSync(
-      `runsc --root ${GVISOR_STATE_DIR} kill ${id} SIGTERM`,
-      { stdio: 'pipe', timeout: 5000 },
-    );
+    execSync(`runsc --root ${GVISOR_STATE_DIR} kill ${id} SIGTERM`, {
+      stdio: 'pipe',
+      timeout: 5000,
+    });
   } catch {
     // runsc kill failed (container may already be gone); fall back to process signal
     const proc = gvisorProcs.get(id);
