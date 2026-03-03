@@ -9,7 +9,8 @@ import { cleanupBwrapOrphans } from './container-runtime-bwrap.js';
 import { logger } from './logger.js';
 
 /** The Docker/apple-container runtime binary name (unused in bwrap mode). */
-export const CONTAINER_RUNTIME_BIN = CONTAINER_RUNTIME === 'bwrap' ? 'bwrap' : CONTAINER_RUNTIME;
+export const CONTAINER_RUNTIME_BIN =
+  CONTAINER_RUNTIME === 'bwrap' ? 'bwrap' : CONTAINER_RUNTIME;
 
 /** Returns CLI args for a readonly Docker bind mount. */
 export function readonlyMountArgs(

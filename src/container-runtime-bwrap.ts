@@ -49,13 +49,19 @@ export function buildBwrapArgs(
     // Bind the entire orchestrator container filesystem read-only.
     // This gives the sandbox Node.js, npm packages, chromium, and all
     // system libraries without enumerating distro-specific paths.
-    '--ro-bind', '/', '/',
+    '--ro-bind',
+    '/',
+    '/',
 
     // Replace kernel-provided filesystems with fresh instances.
-    '--proc', '/proc',
-    '--dev', '/dev',
-    '--tmpfs', '/tmp',
-    '--tmpfs', '/sys',
+    '--proc',
+    '/proc',
+    '--dev',
+    '/dev',
+    '--tmpfs',
+    '/tmp',
+    '--tmpfs',
+    '/sys',
   ];
 
   // Hide the orchestrator's .env so subagents cannot read secrets directly.
@@ -67,13 +73,21 @@ export function buildBwrapArgs(
 
   // Per-group writable mounts override the read-only base above.
   for (const mount of mounts) {
-    args.push(mount.readonly ? '--ro-bind' : '--bind', mount.hostPath, mount.containerPath);
+    args.push(
+      mount.readonly ? '--ro-bind' : '--bind',
+      mount.hostPath,
+      mount.containerPath,
+    );
   }
 
   // Environment — only forward what the subagent needs.
   args.push('--setenv', 'HOME', '/home/node');
   args.push('--setenv', 'AGENT_BROWSER_EXECUTABLE_PATH', '/usr/bin/chromium');
-  args.push('--setenv', 'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH', '/usr/bin/chromium');
+  args.push(
+    '--setenv',
+    'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH',
+    '/usr/bin/chromium',
+  );
   for (const [key, value] of Object.entries(env)) {
     args.push('--setenv', key, value);
   }
