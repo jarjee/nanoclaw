@@ -7,22 +7,29 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AGENT_RUNNER_DIST,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
+  CONTAINER_RUNTIME,
   CONTAINER_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   TIMEZONE,
 } from './config.js';
-import { readEnvFile } from './env.js';
-import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
-import { logger } from './logger.js';
+import {
+  buildBwrapArgs,
+  registerBwrapProcess,
+  stopBwrapContainer,
+} from './container-runtime-bwrap.js';
 import {
   CONTAINER_RUNTIME_BIN,
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
+import { readEnvFile } from './env.js';
+import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
+import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -173,29 +180,34 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Copy agent-runner source into a per-group writable location so agents
-  // can customize it (add tools, change behavior) without affecting other
-  // groups. Recompiled on container startup via entrypoint.sh.
-  const agentRunnerSrc = path.join(
-    projectRoot,
-    'container',
-    'agent-runner',
-    'src',
-  );
-  const groupAgentRunnerDir = path.join(
-    DATA_DIR,
-    'sessions',
-    group.folder,
-    'agent-runner-src',
-  );
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+  // In bwrap mode the agent-runner is pre-compiled into the orchestrator image
+  // at /opt/agent-runner/dist and is visible inside every sandbox via the
+  // --ro-bind / / base mount. No per-group source copy is needed.
+  if (CONTAINER_RUNTIME !== 'bwrap') {
+    // Copy agent-runner source into a per-group writable location so agents
+    // can customize it (add tools, change behavior) without affecting other
+    // groups. Recompiled on container startup via entrypoint.sh.
+    const agentRunnerSrc = path.join(
+      projectRoot,
+      'container',
+      'agent-runner',
+      'src',
+    );
+    const groupAgentRunnerDir = path.join(
+      DATA_DIR,
+      'sessions',
+      group.folder,
+      'agent-runner-src',
+    );
+    if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
+      fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+    }
+    mounts.push({
+      hostPath: groupAgentRunnerDir,
+      containerPath: '/app/src',
+      readonly: false,
+    });
   }
-  mounts.push({
-    hostPath: groupAgentRunnerDir,
-    containerPath: '/app/src',
-    readonly: false,
-  });
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
@@ -211,22 +223,38 @@ function buildVolumeMounts(
 }
 
 /**
- * Read allowed secrets from .env for passing to the container via stdin.
+ * Read allowed secrets for passing to the subagent via stdin.
  * Secrets are never written to disk or mounted as files.
+ * Falls back to process.env for Docker deployments using env_file.
  */
 function readSecrets(): Record<string, string> {
-  return readEnvFile([
+  const keys = [
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_API_KEY',
     'ANTHROPIC_BASE_URL',
     'ANTHROPIC_AUTH_TOKEN',
-  ]);
+  ];
+  const fromFile = readEnvFile(keys);
+  const result: Record<string, string> = {};
+  for (const key of keys) {
+    const val = fromFile[key] ?? process.env[key];
+    if (val) result[key] = val;
+  }
+  return result;
 }
 
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
-): string[] {
+): { bin: string; args: string[] } {
+  if (CONTAINER_RUNTIME === 'bwrap') {
+    return {
+      bin: 'bwrap',
+      args: buildBwrapArgs(mounts, { TZ: TIMEZONE }, AGENT_RUNNER_DIST),
+    };
+  }
+
+  // Docker / apple-container path
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Pass host timezone so container's local time matches the user's
@@ -252,7 +280,7 @@ function buildContainerArgs(
 
   args.push(CONTAINER_IMAGE);
 
-  return args;
+  return { bin: CONTAINER_RUNTIME_BIN, args };
 }
 
 export async function runContainerAgent(
@@ -269,17 +297,18 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const { bin: containerBin, args: containerArgs } = buildContainerArgs(mounts, containerName);
 
   logger.debug(
     {
       group: group.name,
       containerName,
+      runtime: CONTAINER_RUNTIME,
       mounts: mounts.map(
         (m) =>
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
       ),
-      containerArgs: containerArgs.join(' '),
+      containerArgs: [containerBin, ...containerArgs].join(' '),
     },
     'Container mount configuration',
   );
@@ -288,6 +317,7 @@ export async function runContainerAgent(
     {
       group: group.name,
       containerName,
+      runtime: CONTAINER_RUNTIME,
       mountCount: mounts.length,
       isMain: input.isMain,
     },
@@ -298,9 +328,13 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
+    const container = spawn(containerBin, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+
+    if (CONTAINER_RUNTIME === 'bwrap') {
+      registerBwrapProcess(containerName, container);
+    }
 
     onProcess(container, containerName);
 
@@ -408,15 +442,23 @@ export async function runContainerAgent(
         { group: group.name, containerName },
         'Container timeout, stopping gracefully',
       );
-      exec(stopContainer(containerName), { timeout: 15000 }, (err) => {
-        if (err) {
-          logger.warn(
-            { group: group.name, containerName, err },
-            'Graceful stop failed, force killing',
-          );
-          container.kill('SIGKILL');
-        }
-      });
+      if (CONTAINER_RUNTIME === 'bwrap') {
+        stopBwrapContainer(containerName);
+        // Give the process a moment to exit cleanly before hard kill
+        setTimeout(() => {
+          if (!container.killed) container.kill('SIGKILL');
+        }, 5000);
+      } else {
+        exec(stopContainer(containerName), { timeout: 15000 }, (err) => {
+          if (err) {
+            logger.warn(
+              { group: group.name, containerName, err },
+              'Graceful stop failed, force killing',
+            );
+            container.kill('SIGKILL');
+          }
+        });
+      }
     };
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);
@@ -503,7 +545,7 @@ export async function runContainerAgent(
           JSON.stringify(input, null, 2),
           ``,
           `=== Container Args ===`,
-          containerArgs.join(' '),
+          [containerBin, ...containerArgs].join(' '),
           ``,
           `=== Mounts ===`,
           mounts

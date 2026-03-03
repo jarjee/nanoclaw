@@ -1,0 +1,23 @@
+services:
+  nanoclaw:
+    build: .
+    restart: unless-stopped
+
+    # .env is loaded two ways:
+    #   1. env_file injects all vars into process.env (picked up by config.ts fallbacks)
+    #   2. The file is also bind-mounted at /app/.env so readEnvFile() works as on bare-metal
+    env_file: .env
+
+    cap_add:
+      - SYS_ADMIN # bwrap needs unshare(CLONE_NEWNS) to create mount namespaces
+
+    volumes:
+      # Persistent group memory (CLAUDE.md files, per-group state)
+      - ./groups:/app/groups
+      # Persistent sessions (.claude/), IPC state, container logs
+      - ./data:/app/data
+      # Secrets file — readEnvFile() reads this directly from disk
+      - ./.env:/app/.env:ro
+
+    # Unraid users: add --cap-add=SYS_ADMIN to "Extra Parameters" in the
+    # container template, or enable the "Privileged" toggle as an alternative.

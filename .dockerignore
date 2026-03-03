@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/
+container/agent-runner/node_modules/
+container/agent-runner/dist/
+.env
+*.log
+groups/*/logs/
+.git/
+coverage/

@@ -4,12 +4,14 @@
  */
 import { execSync } from 'child_process';
 
+import { CONTAINER_RUNTIME } from './config.js';
+import { cleanupBwrapOrphans } from './container-runtime-bwrap.js';
 import { logger } from './logger.js';
 
-/** The container runtime binary name. */
-export const CONTAINER_RUNTIME_BIN = 'docker';
+/** The Docker/apple-container runtime binary name (unused in bwrap mode). */
+export const CONTAINER_RUNTIME_BIN = CONTAINER_RUNTIME === 'bwrap' ? 'bwrap' : CONTAINER_RUNTIME;
 
-/** Returns CLI args for a readonly bind mount. */
+/** Returns CLI args for a readonly Docker bind mount. */
 export function readonlyMountArgs(
   hostPath: string,
   containerPath: string,
@@ -17,13 +19,48 @@ export function readonlyMountArgs(
   return ['-v', `${hostPath}:${containerPath}:ro`];
 }
 
-/** Returns the shell command to stop a container by name. */
+/** Returns the shell command to stop a Docker container by name. */
 export function stopContainer(name: string): string {
   return `${CONTAINER_RUNTIME_BIN} stop ${name}`;
 }
 
-/** Ensure the container runtime is running, starting it if needed. */
+/** Ensure the subagent runtime is available, exiting with a clear error if not. */
 export function ensureContainerRuntimeRunning(): void {
+  if (CONTAINER_RUNTIME === 'bwrap') {
+    try {
+      execSync('which bwrap', { stdio: 'pipe', timeout: 5000 });
+      logger.debug('bwrap runtime available');
+    } catch (err) {
+      logger.error({ err }, 'bwrap not found');
+      console.error(
+        '\n╔════════════════════════════════════════════════════════════════╗',
+      );
+      console.error(
+        '║  FATAL: bubblewrap (bwrap) is not installed                    ║',
+      );
+      console.error(
+        '║                                                                ║',
+      );
+      console.error(
+        '║  Agents cannot run without a sandbox runtime. To fix:          ║',
+      );
+      console.error(
+        '║  1. Install bubblewrap: apt-get install bubblewrap             ║',
+      );
+      console.error(
+        '║  2. Or switch to Docker: set CONTAINER_RUNTIME=docker in .env  ║',
+      );
+      console.error(
+        '║  3. Restart NanoClaw                                           ║',
+      );
+      console.error(
+        '╚════════════════════════════════════════════════════════════════╝\n',
+      );
+      throw new Error('bwrap is required but not found');
+    }
+    return;
+  }
+
   try {
     execSync(`${CONTAINER_RUNTIME_BIN} info`, {
       stdio: 'pipe',
@@ -60,8 +97,15 @@ export function ensureContainerRuntimeRunning(): void {
   }
 }
 
-/** Kill orphaned NanoClaw containers from previous runs. */
+/** Kill orphaned NanoClaw subagents from previous runs. */
 export function cleanupOrphans(): void {
+  if (CONTAINER_RUNTIME === 'bwrap') {
+    // bwrap processes are tracked in-memory only; they don't outlive the
+    // orchestrator process. On a fresh container start there are no orphans.
+    cleanupBwrapOrphans();
+    return;
+  }
+
   try {
     const output = execSync(
       `${CONTAINER_RUNTIME_BIN} ps --filter name=nanoclaw- --format '{{.Names}}'`,

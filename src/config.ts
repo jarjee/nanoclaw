@@ -1,3 +1,4 @@
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
@@ -33,6 +34,19 @@ export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
+
+// Which subagent isolation runtime to use.
+// Defaults to 'bwrap' when running inside a Docker container (/.dockerenv present),
+// otherwise falls back to 'docker'. Set CONTAINER_RUNTIME=docker in .env to force
+// the Docker path on a bare-metal install.
+const _isInDocker = fs.existsSync('/.dockerenv');
+export const CONTAINER_RUNTIME =
+  process.env.CONTAINER_RUNTIME || (_isInDocker ? 'bwrap' : 'docker');
+
+// Location of the pre-compiled agent-runner dist used in bwrap mode.
+// In the orchestrator Docker image this is /opt/agent-runner/dist.
+export const AGENT_RUNNER_DIST =
+  process.env.AGENT_RUNNER_DIST || '/opt/agent-runner/dist';
 export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || '1800000',
   10,
