@@ -36,17 +36,24 @@ export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
 
 // Which subagent isolation runtime to use.
-// Defaults to 'bwrap' when running inside a Docker container (/.dockerenv present),
-// otherwise falls back to 'docker'. Set CONTAINER_RUNTIME=docker in .env to force
-// the Docker path on a bare-metal install.
+// Defaults to 'gvisor' when running inside a Docker container (/.dockerenv present),
+// otherwise falls back to 'docker'. Set CONTAINER_RUNTIME=bwrap or =docker in .env
+// to override (bwrap needs SYS_ADMIN cap; docker is for bare-metal installs).
 const _isInDocker = fs.existsSync('/.dockerenv');
 export const CONTAINER_RUNTIME =
-  process.env.CONTAINER_RUNTIME || (_isInDocker ? 'bwrap' : 'docker');
+  process.env.CONTAINER_RUNTIME || (_isInDocker ? 'gvisor' : 'docker');
 
-// Location of the pre-compiled agent-runner dist used in bwrap mode.
+// Location of the pre-compiled agent-runner dist used in bwrap/gvisor modes.
 // In the orchestrator Docker image this is /opt/agent-runner/dist.
 export const AGENT_RUNNER_DIST =
   process.env.AGENT_RUNNER_DIST || '/opt/agent-runner/dist';
+
+// gVisor-specific configuration
+// Platform: 'ptrace' (portable, needs SYS_PTRACE cap) or 'kvm' (faster, needs /dev/kvm)
+export const GVISOR_PLATFORM = process.env.GVISOR_PLATFORM || 'ptrace';
+// State directory for runsc container metadata (cleaned up on startup)
+export const GVISOR_STATE_DIR =
+  process.env.GVISOR_STATE_DIR || '/tmp/nanoclaw-gvisor';
 export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || '1800000',
   10,

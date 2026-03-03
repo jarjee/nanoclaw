@@ -6,6 +6,7 @@ import { execSync } from 'child_process';
 
 import { CONTAINER_RUNTIME } from './config.js';
 import { cleanupBwrapOrphans } from './container-runtime-bwrap.js';
+import { cleanupGVisorOrphans } from './container-runtime-gvisor.js';
 import { logger } from './logger.js';
 
 /** The Docker/apple-container runtime binary name (unused in bwrap mode). */
@@ -27,6 +28,41 @@ export function stopContainer(name: string): string {
 
 /** Ensure the subagent runtime is available, exiting with a clear error if not. */
 export function ensureContainerRuntimeRunning(): void {
+  if (CONTAINER_RUNTIME === 'gvisor') {
+    try {
+      execSync('which runsc', { stdio: 'pipe', timeout: 5000 });
+      logger.debug('gVisor (runsc) runtime available');
+    } catch (err) {
+      logger.error({ err }, 'runsc not found');
+      console.error(
+        '\n╔════════════════════════════════════════════════════════════════╗',
+      );
+      console.error(
+        '║  FATAL: gVisor (runsc) is not installed                        ║',
+      );
+      console.error(
+        '║                                                                ║',
+      );
+      console.error(
+        '║  Agents cannot run without a sandbox runtime. To fix:          ║',
+      );
+      console.error(
+        '║  1. Install gVisor: https://gvisor.dev/docs/user_guide/install ║',
+      );
+      console.error(
+        '║  2. Or switch to bwrap: set CONTAINER_RUNTIME=bwrap in .env    ║',
+      );
+      console.error(
+        '║  3. Restart NanoClaw                                           ║',
+      );
+      console.error(
+        '╚════════════════════════════════════════════════════════════════╝\n',
+      );
+      throw new Error('gVisor (runsc) is required but not found');
+    }
+    return;
+  }
+
   if (CONTAINER_RUNTIME === 'bwrap') {
     try {
       execSync('which bwrap', { stdio: 'pipe', timeout: 5000 });
@@ -49,7 +85,7 @@ export function ensureContainerRuntimeRunning(): void {
         '║  1. Install bubblewrap: apt-get install bubblewrap             ║',
       );
       console.error(
-        '║  2. Or switch to Docker: set CONTAINER_RUNTIME=docker in .env  ║',
+        '║  2. Or switch to gVisor: set CONTAINER_RUNTIME=gvisor in .env  ║',
       );
       console.error(
         '║  3. Restart NanoClaw                                           ║',
@@ -100,6 +136,13 @@ export function ensureContainerRuntimeRunning(): void {
 
 /** Kill orphaned NanoClaw subagents from previous runs. */
 export function cleanupOrphans(): void {
+  if (CONTAINER_RUNTIME === 'gvisor') {
+    // runsc persists state on disk; orphaned entries from a crashed orchestrator
+    // need explicit cleanup via `runsc delete`.
+    cleanupGVisorOrphans();
+    return;
+  }
+
   if (CONTAINER_RUNTIME === 'bwrap') {
     // bwrap processes are tracked in-memory only; they don't outlive the
     // orchestrator process. On a fresh container start there are no orphans.

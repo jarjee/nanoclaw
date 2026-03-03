@@ -9,7 +9,18 @@ services:
     env_file: .env
 
     cap_add:
-      - SYS_ADMIN # bwrap needs unshare(CLONE_NEWNS) to create mount namespaces
+      - SYS_PTRACE # gVisor ptrace mode: intercepts subagent syscalls without KVM
+
+    # Uncomment to enable gVisor KVM mode (faster ~2x, requires /dev/kvm on the host):
+    #   Also set GVISOR_PLATFORM=kvm in .env or environment below.
+    # devices:
+    #   - /dev/kvm
+
+    # Uncomment to switch to bubblewrap (namespace isolation, needs SYS_ADMIN instead):
+    # cap_add:
+    #   - SYS_ADMIN
+    # environment:
+    #   - CONTAINER_RUNTIME=bwrap
 
     volumes:
       # Persistent group memory (CLAUDE.md files, per-group state)
@@ -19,5 +30,5 @@ services:
       # Secrets file — readEnvFile() reads this directly from disk
       - ./.env:/app/.env:ro
 
-    # Unraid users: add --cap-add=SYS_ADMIN to "Extra Parameters" in the
-    # container template, or enable the "Privileged" toggle as an alternative.
+    # Unraid users: add --cap-add=SYS_PTRACE to "Extra Parameters" in the
+    # container template. For KVM mode also add --device /dev/kvm.

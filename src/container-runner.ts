@@ -23,6 +23,10 @@ import {
   stopBwrapContainer,
 } from './container-runtime-bwrap.js';
 import {
+  spawnGVisorContainer,
+  stopGVisorContainer,
+} from './container-runtime-gvisor.js';
+import {
   CONTAINER_RUNTIME_BIN,
   readonlyMountArgs,
   stopContainer,
@@ -330,14 +334,30 @@ export async function runContainerAgent(
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
-  return new Promise((resolve) => {
-    const container = spawn(containerBin, containerArgs, {
+  // Spawn the subagent process using the appropriate sandbox runtime.
+  // gVisor builds an OCI bundle before spawning; bwrap/docker spawn directly.
+  const spawnSubagent = (): ChildProcess => {
+    if (CONTAINER_RUNTIME === 'gvisor') {
+      const appEnvPath = path.join(process.cwd(), '.env');
+      return spawnGVisorContainer(
+        containerName,
+        mounts,
+        { TZ: TIMEZONE },
+        AGENT_RUNNER_DIST,
+        fs.existsSync(appEnvPath) ? appEnvPath : null,
+      );
+    }
+    const proc = spawn(containerBin, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-
     if (CONTAINER_RUNTIME === 'bwrap') {
-      registerBwrapProcess(containerName, container);
+      registerBwrapProcess(containerName, proc);
     }
+    return proc;
+  };
+
+  return new Promise((resolve) => {
+    const container = spawnSubagent();
 
     onProcess(container, containerName);
 
@@ -348,8 +368,8 @@ export async function runContainerAgent(
 
     // Pass secrets via stdin (never written to disk or mounted as files)
     input.secrets = readSecrets();
-    container.stdin.write(JSON.stringify(input));
-    container.stdin.end();
+    container.stdin!.write(JSON.stringify(input));
+    container.stdin!.end();
     // Remove secrets from input so they don't appear in logs
     delete input.secrets;
 
@@ -358,7 +378,7 @@ export async function runContainerAgent(
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
 
-    container.stdout.on('data', (data) => {
+    container.stdout!.on('data', (data) => {
       const chunk = data.toString();
 
       // Always accumulate for logging
@@ -410,7 +430,7 @@ export async function runContainerAgent(
       }
     });
 
-    container.stderr.on('data', (data) => {
+    container.stderr!.on('data', (data) => {
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
@@ -445,7 +465,13 @@ export async function runContainerAgent(
         { group: group.name, containerName },
         'Container timeout, stopping gracefully',
       );
-      if (CONTAINER_RUNTIME === 'bwrap') {
+      if (CONTAINER_RUNTIME === 'gvisor') {
+        stopGVisorContainer(containerName);
+        // Give the Sentry a moment to flush then hard kill
+        setTimeout(() => {
+          if (!container.killed) container.kill('SIGKILL');
+        }, 5000);
+      } else if (CONTAINER_RUNTIME === 'bwrap') {
         stopBwrapContainer(containerName);
         // Give the process a moment to exit cleanly before hard kill
         setTimeout(() => {
