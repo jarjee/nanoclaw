@@ -220,6 +220,14 @@ function readSecrets(): Record<string, string> {
     'ANTHROPIC_API_KEY',
     'ANTHROPIC_BASE_URL',
     'ANTHROPIC_AUTH_TOKEN',
+    // Network proxy forwarding — needed in corporate/cloud environments
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'NO_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'no_proxy',
+    'GLOBAL_AGENT_HTTP_PROXY',
   ]);
 }
 
