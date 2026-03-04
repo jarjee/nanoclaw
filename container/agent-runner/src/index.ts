@@ -511,6 +511,11 @@ async function main(): Promise<void> {
   // Build SDK env: merge secrets into process.env for the SDK only.
   // Secrets never touch process.env itself, so Bash subprocesses can't see them.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
+  // claude-code 2.x refuses allowDangerouslySkipPermissions when running as root
+  // unless CLAUDE_CODE_BUBBLEWRAP=1 signals a sandbox is in place.
+  if (process.getuid?.() === 0) {
+    sdkEnv['CLAUDE_CODE_BUBBLEWRAP'] = '1';
+  }
   for (const [key, value] of Object.entries(containerInput.secrets || {})) {
     sdkEnv[key] = value;
   }
